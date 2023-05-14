@@ -1,0 +1,61 @@
+[tool.poetry]
+name = "Video3D"
+version = "0.1.0"
+description = ""
+authors = ["ytya <ytyadev@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "~3.10"
+torch = { url="https://download.pytorch.org/whl/cu117/torch-2.0.1%2Bcu117-cp310-cp310-win_amd64.whl" }
+torchvision = { url="https://download.pytorch.org/whl/cu117/torchvision-0.15.2%2Bcu117-cp310-cp310-win_amd64.whl" }
+tensorflow = "2.11.1"
+tensorflow-io-gcs-filesystem = "0.31.0"  # 0.32.0 だとインストールエラー
+tqdm = "*"
+pillow = "*"
+fire = "*"
+opencv-python = "*"
+
+# MiDaS
+timm = "0.6.12" # 0.9.1 だと実行時エラー
+
+# frame-interpolation
+
+# opencv-contrib-python = "*"
+# matplotlib = "*"
+# numpy = "*"
+# einops = "*"
+# imutils = "*"
+# tensorflow = "2.8.4"
+# tensorflow-datasets = "*"
+# tensorflow-addons = "*"
+# absl-py = "*"
+# gin-config = "*"
+# parameterized = "*"
+# mediapy = "*"
+# scikit-image = "*"
+# apache-beam = "2.44.0"
+# natsort = "*"
+# gdown = "*"
+# pyarrow = "9.0.0"
+# scikit-video = "*"
+
+
+[tool.poetry.dev-dependencies]
+black = "*"
+flake8 = "*"
+jupyterlab = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 119
+--extend-exclude = '''
+(
+    .venv
+    | frame-interpolation
+    | MiDaS
+)
+'''

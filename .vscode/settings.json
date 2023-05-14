@@ -1,0 +1,14 @@
+{
+    "python.formatting.provider": "black",
+    "editor.formatOnSave": true,
+    "python.analysis.extraPaths": [
+        "MiDaS",
+        "frame-interpolation",
+        "ZoeDepth"
+    ],
+    "python.autoComplete.extraPaths": [
+        "MiDaS",
+        "frame-interpolation",
+        "ZoeDepth"
+    ]
+}
