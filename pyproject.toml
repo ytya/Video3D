@@ -15,6 +15,7 @@ tqdm = "*"
 pillow = "*"
 fire = "*"
 opencv-python = "*"
+scikit-video = "*"
 
 # MiDaS
 timm = "0.6.12" # 0.9.1 だと実行時エラー
@@ -38,7 +39,6 @@ timm = "0.6.12" # 0.9.1 だと実行時エラー
 # natsort = "*"
 # gdown = "*"
 # pyarrow = "9.0.0"
-# scikit-video = "*"
 
 
 [tool.poetry.dev-dependencies]
