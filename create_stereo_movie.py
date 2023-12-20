@@ -167,7 +167,7 @@ def run(src_path: Path, jpg_dir: Path, depth_dir: Path, output_path: Path, frame
         # メモリ消費を抑制するためにチャンクに分割して処理
         for i in tqdm(range(0, len(jpg_paths), chunk_num)):
             futures = [
-                executor.submit(create_sbs_zeodepth, jpg_path, depth_path, is_half)
+                executor.submit(create_sbs, jpg_path, depth_path, is_half)
                 for jpg_path, depth_path in zip(jpg_paths[i : i + chunk_num], depth_paths[i : i + chunk_num])
             ]
             for future in futures:

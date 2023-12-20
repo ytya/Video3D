@@ -20,7 +20,7 @@ def main(src_path: Union[str, Path], jpg_dir: Optional[Union[str, Path]] = None)
     jpg_dir.mkdir(exist_ok=True, parents=True)
 
     # 実行
-    command = f'ffmpeg -i "{src_path}" -q 2 {jpg_dir}/%05d.jpg'
+    command = f'ffmpeg -i "{src_path}" -q 2 "{jpg_dir}/%05d.jpg"'
     subprocess.call(command, shell=True)
 
 
