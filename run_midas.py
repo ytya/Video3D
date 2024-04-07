@@ -1,10 +1,11 @@
-import torch
 from pathlib import Path
-from PIL import Image
-import numpy as np
-from numpy.typing import NDArray, DTypeLike
-from tqdm import tqdm
+
 import fire
+import numpy as np
+import torch
+from numpy.typing import DTypeLike, NDArray
+from PIL import Image
+from tqdm import tqdm
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -42,7 +43,7 @@ def run(jpg_dir: Path, dst_dir: Path, use_half: bool = True):
 
     # 処理開始
     dst_dir.mkdir(exist_ok=True, parents=True)
-    jpg_paths = list(jpg_dir.glob("*.jpg"))
+    jpg_paths = list(sorted(jpg_dir.glob("*.jpg")))
     with torch.no_grad():
         for jpg_path in tqdm(jpg_paths):
             # Depth推定

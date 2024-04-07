@@ -1,0 +1,3 @@
+[submodule "nvds"]
+	path = nvds
+	url = https://github.com/ytya/NVDS.git

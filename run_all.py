@@ -1,11 +1,11 @@
-from pathlib import Path
-from typing import Union, Optional
-
 import subprocess
+from pathlib import Path
+from typing import Union
+
 import fire
 
 
-def main(src_path: Union[str, Path]):
+def main(src_path: Union[str, Path], target: str = "projector"):
     """動画分割
 
     :param Union[str, Path] src_path: 元動画
@@ -19,18 +19,22 @@ def main(src_path: Union[str, Path]):
 
     # 前処理
     command = f'poetry run python preprocess.py "{src_path}" "{jpg_dir}"'
-    subprocess.call(command, shell=True)
+    print(command)
+    # subprocess.call(command, shell=True)
 
     # depth推定
     command = f'poetry run python run_midas.py "{jpg_dir}" "{depth_dir}"'
-    subprocess.call(command, shell=True)
+    print(command)
+    # subprocess.call(command, shell=True)
 
     # 3D動画生成
-    command = f'poetry run python create_stereo_movie.py -s "{src_path}" -i "{jpg_dir}" -d "{depth_dir}" -o "{stereo_path}" --half'
+    command = f'poetry run python create_stereo_movie.py -s "{src_path}" -i "{jpg_dir}" -d "{depth_dir}" -o "{stereo_path}" -t {target}'
+    print(command)
     subprocess.call(command, shell=True)
 
     # 音声コピー
     command = f'ffmpeg -i "{src_path}" -i "{stereo_path}" -c:v copy -c:a copy -map 0:a -map 1:v "{dst_path}"'
+    print(command)
     subprocess.call(command, shell=True)
 
 

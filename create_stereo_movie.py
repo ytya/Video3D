@@ -1,38 +1,48 @@
-import cv2
-from pathlib import Path
-from tqdm import tqdm
-import numpy as np
 import argparse
+import dataclasses
 from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
 
+import cv2
+import numpy as np
 import skvideo
 
 # ffmpeg_path = r""
 # skvideo.setFFmpegPath(ffmpeg_path)
 import skvideo.io
+from tqdm import tqdm
 
 
 # プロジェクター用設定
-DIST_SCREEN = 2200  # 観察距離[mm]
-DIST_FORWARD = 818  # 凸方向の距離の最大値[mm]
-DIST_BACK = 3176  # 凹方向の距離の最大値[mm]
-DIST_MIN = DIST_SCREEN - DIST_FORWARD
-DIST_MAX = DIST_SCREEN + DIST_BACK
-PD = 65  # 瞳孔間距離[mm]
-SCREEN_W = 2037  # スクリーン幅[mm]
-IMAGE_W = 1920  # 画像幅[px]
+@dataclasses.dataclass(frozen=True)
+class StereoConfig:
+    """変換設定"""
 
-# スマホ用設定
-# DIST_SCREEN = 250  # 観察距離[mm]
-# DIST_FORWARD = 18  # 凸方向の距離の最大値[mm]
-# DIST_BACK = 21    # 凹方向の距離の最大値[mm]
-# DIST_MIN = DIST_SCREEN - DIST_FORWARD
-# DIST_MAX = DIST_SCREEN + DIST_BACK
-# PD = 65  # 瞳孔間距離[mm]
-# SCREEN_W = 250  # スクリーン幅[mm]
-# IMAGE_W = 1920   # 画像幅[px]
+    dist_screen: int  # 観察距離[mm]
+    dist_forward: int  # 凸方向の距離の最大値[mm]
+    dist_back: int  # 凹方向の距離の最大値[mm]
+    pd: int  # 瞳孔間距離[mm]
+    screen_w: int  # スクリーン幅[mm]
+    image_w: int  # 画像幅[px]
+    is_half: bool  # half side by sideで出力
+    dist_min: int = dataclasses.field(init=False)
+    dist_max: int = dataclasses.field(init=False)
 
-WORKER_NUM = 2
+    def __post_init__(self):
+        object.__setattr__(self, "dist_min", self.dist_screen - self.dist_forward)
+        object.__setattr__(self, "dist_max", self.dist_screen + self.dist_back)
+
+
+CONFIG = {
+    "projector": StereoConfig(
+        dist_screen=2200, dist_forward=818, dist_back=3176, pd=65, screen_w=2037, image_w=1920, is_half=True
+    ),
+    "mobile": StereoConfig(
+        dist_screen=250, dist_forward=18, dist_back=21, pd=65, screen_w=250, image_w=1920, is_half=False
+    ),
+}
+
+WORKER_NUM = 3  # 並列数
 
 
 def invert_map(f):
@@ -46,11 +56,14 @@ def invert_map(f):
     return p
 
 
-def create_sbs(jpg_path: Path, depth_path: Path, is_half: bool = True) -> np.ndarray:
+def create_sbs(jpg_path: Path, depth_path: Path, config: StereoConfig) -> np.ndarray:
     """SBS画像作成"""
     src_img = cv2.imread(str(jpg_path))
     depth = cv2.imread(str(depth_path), cv2.IMREAD_UNCHANGED)
     height, width = src_img.shape[:2]
+
+    if (depth.shape[0] != height) or (depth.shape[1] != width):
+        depth = cv2.resize(depth, (width, height), interpolation=cv2.INTER_CUBIC)
 
     # 境界部のdepth推定エラーをごまかす
     depth2 = cv2.dilate(depth, np.ones((7, 7), np.uint8), iterations=3)
@@ -60,15 +73,15 @@ def create_sbs(jpg_path: Path, depth_path: Path, is_half: bool = True) -> np.nda
     # 距離計算 (depth = 1 / 距離)
     depth_max = int(depth.max())
     depth_min = int(depth.min())
-    scale = (1 / DIST_MAX - 1 / DIST_MIN) / (depth_min - depth_max)
-    shift = 1 / DIST_MIN - depth_max * scale
+    scale = (1 / config.dist_max - 1 / config.dist_min) / (depth_min - depth_max)
+    shift = 1 / config.dist_min - depth_max * scale
     dist = 1 / (depth * scale + shift)
     dist = cv2.blur(dist, ksize=(11, 11))
 
     # 視差計算
-    dist -= DIST_SCREEN  # スクリーンより手前がマイナス
-    disp = dist * PD / (DIST_SCREEN + dist)  # プラスならR画素がL画素より右、マイナスなら逆
-    disp_px = disp / SCREEN_W * IMAGE_W / 2  # 視差
+    dist -= config.dist_screen  # スクリーンより手前がマイナス
+    disp = dist * config.pd / (config.dist_screen + dist)  # プラスならR画素がL画素より右、マイナスなら逆
+    disp_px = disp / config.screen_w * config.image_w / 2  # 視差
 
     # SBS用remap計算
     left_map_x, left_map_y = np.meshgrid(range(width), range(height))
@@ -86,16 +99,19 @@ def create_sbs(jpg_path: Path, depth_path: Path, is_half: bool = True) -> np.nda
     left_img = cv2.remap(src_img, left_map_inv, None, interpolation=cv2.INTER_LINEAR)
     right_img = cv2.remap(src_img, right_map_inv, None, interpolation=cv2.INTER_LINEAR)
     frame = np.hstack((left_img, right_img))[:, :, ::-1]
-    if is_half:
+    if config.is_half:
         frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_CUBIC)
     return frame
 
 
-def create_sbs_zeodepth(jpg_path: Path, depth_path: Path, is_half: bool = True) -> np.ndarray:
+def create_sbs_zeodepth(jpg_path: Path, depth_path: Path, config: StereoConfig) -> np.ndarray:
     """SBS画像作成"""
     src_img = cv2.imread(str(jpg_path))
     depth = cv2.imread(str(depth_path), cv2.IMREAD_UNCHANGED)
     height, width = src_img.shape[:2]
+
+    if (depth.shape[0] != height) or (depth.shape[1] != width):
+        depth = cv2.resize(depth, (width, height), interpolation=cv2.INTER_CUBIC)
 
     # 境界部のdepth推定エラーをごまかす
     # depth2 = cv2.dilate(depth, np.ones((7, 7), np.uint8), iterations=3)
@@ -105,15 +121,15 @@ def create_sbs_zeodepth(jpg_path: Path, depth_path: Path, is_half: bool = True) 
     # 距離計算 (depth = 距離)
     depth_max = int(depth.max())
     depth_min = int(depth.min())
-    scale = (1 / DIST_MAX - 1 / DIST_MIN) / (1 / depth_max - 1 / depth_min)
-    shift = 1 / DIST_MIN - (1 / depth_min) * scale
+    scale = (1 / config.dist_max - 1 / config.dist_min) / (1 / depth_max - 1 / depth_min)
+    shift = 1 / config.dist_min - (1 / depth_min) * scale
     dist = 1 / ((1 / depth) * scale + shift)
     dist = cv2.blur(dist, ksize=(11, 11))
 
     # 視差計算
-    dist -= DIST_SCREEN  # スクリーンより手前がマイナス
-    disp = dist * PD / (DIST_SCREEN + dist)  # プラスならR画素がL画素より右、マイナスなら逆
-    disp_px = disp / SCREEN_W * IMAGE_W / 2  # 視差
+    dist -= config.dist_screen  # スクリーンより手前がマイナス
+    disp = dist * config.pd / (config.dist_screen + dist)  # プラスならR画素がL画素より右、マイナスなら逆
+    disp_px = disp / config.screen_w * config.image_w / 2  # 視差
 
     # SBS用remap計算
     left_map_x, left_map_y = np.meshgrid(range(width), range(height))
@@ -131,12 +147,14 @@ def create_sbs_zeodepth(jpg_path: Path, depth_path: Path, is_half: bool = True) 
     left_img = cv2.remap(src_img, left_map_inv, None, interpolation=cv2.INTER_LINEAR)
     right_img = cv2.remap(src_img, right_map_inv, None, interpolation=cv2.INTER_LINEAR)
     frame = np.hstack((left_img, right_img))[:, :, ::-1]
-    if is_half:
+    if config.is_half:
         frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_CUBIC)
     return frame
 
 
-def run(src_path: Path, jpg_dir: Path, depth_dir: Path, output_path: Path, frame_interpolated: int, is_half: bool):
+def run(
+    src_path: Path, jpg_dir: Path, depth_dir: Path, output_path: Path, frame_interpolated: int, config: StereoConfig
+):
     """3D動画生成"""
     # ステレオ画像生成
     output_path.parent.mkdir(exist_ok=True, parents=True)
@@ -167,7 +185,7 @@ def run(src_path: Path, jpg_dir: Path, depth_dir: Path, output_path: Path, frame
         # メモリ消費を抑制するためにチャンクに分割して処理
         for i in tqdm(range(0, len(jpg_paths), chunk_num)):
             futures = [
-                executor.submit(create_sbs, jpg_path, depth_path, is_half)
+                executor.submit(create_sbs, jpg_path, depth_path, config)
                 for jpg_path, depth_path in zip(jpg_paths[i : i + chunk_num], depth_paths[i : i + chunk_num])
             ]
             for future in futures:
@@ -183,7 +201,7 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--depth_path", default=None, help="folder with depth images")
     parser.add_argument("-o", "--output_path", default=None, help="output movie path")
     parser.add_argument("-f", "--frame_interpolated", default=1, type=int, help="input images is frame interpolated")
-    parser.add_argument("--half", action="store_true", help="output half side by side")
+    parser.add_argument("-t", "--target_device", default="projector", help="target device (projector or mobile)")
     args = parser.parse_args()
 
     src_path = Path(args.src_path)
@@ -200,4 +218,5 @@ if __name__ == "__main__":
         output_path = Path(args.output_path)
     else:
         output_path = src_path.parent.parent / "3d" / src_path.name
-    run(src_path, jpg_dir, depth_dir, output_path, args.frame_interpolated, args.half)
+    config = CONFIG[args.target_device]
+    run(src_path, jpg_dir, depth_dir, output_path, args.frame_interpolated, config)
