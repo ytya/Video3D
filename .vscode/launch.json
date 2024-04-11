@@ -36,10 +36,49 @@
             "console": "integratedTerminal",
             "args": [
                 "--jpg_dir",
-                "./NVDS/demo_videos/motocross-jump/left",
+                "H:\\work\\Video3D\\src_jpg\\kimagure_humoresque_clip2",
                 "--dst_dir",
-                "./demo_outputs/nvds/"
+                "./demo_outputs/nvds/kimagure/"
             ]
+        },
+        {
+            "name": "Python デバッガー: run_direct",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "run_direct.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-s",
+                "H:\\work\\Video3D\\src\\SAXC1050.Title1.chapter04.mkv",
+                "-i",
+                "H:\\work\\Video3D\\src_jpg\\SAXC1050.Title1.chapter04",
+                "-d",
+                "H:\\work\\Video3D\\depth\\SAXC1050.Title1.chapter04_nvds2",
+                "-o",
+                "H:\\work\\Video3D\\3d\\SAXC1050.Title1.chapter04_nvds_nosound.mkv",
+                "-t",
+                "projector"
+            ]
+        },
+        {
+            "name": "Python デバッガー: run_pipeline",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "run_pipeline.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-s",
+                "H:\\work\\Video3D\\src\\SAXC1050.Title1.chapter04.mkv",
+                "-i",
+                "H:\\work\\Video3D\\src_jpg\\SAXC1050.Title1.chapter04",
+                "-d",
+                "H:\\work\\Video3D\\depth\\SAXC1050.Title1.chapter04_nvds",
+                "-o",
+                "H:\\work\\Video3D\\3d\\SAXC1050.Title1.chapter04_nvds_nosound.mkv",
+                "-t",
+                "projector"
+            ],
+            "justMyCode": false
         }
     ]
 }

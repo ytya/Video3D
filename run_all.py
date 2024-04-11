@@ -23,9 +23,9 @@ def main(src_path: Union[str, Path], target: str = "projector"):
     # subprocess.call(command, shell=True)
 
     # depth推定
-    command = f'poetry run python run_midas.py "{jpg_dir}" "{depth_dir}"'
+    command = f'poetry run python run_nvds.py "{jpg_dir}" "{depth_dir}"'
     print(command)
-    # subprocess.call(command, shell=True)
+    subprocess.call(command, shell=True)
 
     # 3D動画生成
     command = f'poetry run python create_stereo_movie.py -s "{src_path}" -i "{jpg_dir}" -d "{depth_dir}" -o "{stereo_path}" -t {target}'

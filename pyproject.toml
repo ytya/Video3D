@@ -55,7 +55,7 @@ build-backend = "poetry.core.masonry.api"
 target-version = "py310"
 line-length = 119
 extend-exclude = [
-  "NVDS",
+  "nvds"
 ]
 
 [tool.ruff.lint]
