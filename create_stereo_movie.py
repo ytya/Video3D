@@ -52,7 +52,8 @@ def invert_map(f):
     p = np.copy(inv)
     for i in range(10):
         cor = inv - cv2.remap(f, p, None, interpolation=cv2.INTER_LINEAR)
-        p += cor * 0.5
+        rate = max(0.05, 1.0 - i * 0.2)  # 徐々に収束幅を狭める
+        p += cor * rate
     return p
 
 
@@ -63,20 +64,26 @@ def create_sbs(jpg_path: Path, depth_path: Path, config: StereoConfig) -> np.nda
     height, width = src_img.shape[:2]
 
     if (depth.shape[0] != height) or (depth.shape[1] != width):
-        depth = cv2.resize(depth, (width, height), interpolation=cv2.INTER_CUBIC)
+        depth = cv2.resize(
+            depth, (width, height), interpolation=cv2.INTER_LINEAR
+        )  # CUBICだとアンダーシュート・オーバーシュートが発生する
 
     # 境界部のdepth推定エラーをごまかす
-    depth2 = cv2.dilate(depth, np.ones((7, 7), np.uint8), iterations=3)
-    gap = depth2 - depth > (depth.max() - depth.min()) / 4
-    depth[gap] = depth2[gap]
+    # 輪郭部 ≒ depthギャップが大きい部分を拡張
+    depth_dil = depth.copy()
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 3))
+    depth2 = cv2.dilate(depth_dil, kernel, iterations=3)
+    gap = depth2 - depth_dil > (depth_dil.max() - depth_dil.min()) / 4
+    gap = cv2.dilate(gap.astype(np.uint8), kernel, iterations=3)
+    depth_dil[gap == 1] = depth2[gap == 1]
 
     # 距離計算 (depth = 1 / 距離)
-    depth_max = int(depth.max())
-    depth_min = int(depth.min())
+    depth_max = int(depth_dil.max())
+    depth_min = int(depth_dil.min())
     scale = (1 / config.dist_max - 1 / config.dist_min) / (depth_min - depth_max)
     shift = 1 / config.dist_min - depth_max * scale
-    dist = 1 / (depth * scale + shift)
-    dist = cv2.blur(dist, ksize=(11, 11))
+    dist = 1 / (depth_dil * scale + shift)
+    dist = cv2.GaussianBlur(dist, (11, 11), 0)
 
     # 視差計算
     dist -= config.dist_screen  # スクリーンより手前がマイナス

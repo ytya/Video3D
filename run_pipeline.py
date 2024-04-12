@@ -77,6 +77,7 @@ def midas_worker(proc_idx: int, input_queue: mp.Queue, output_queue: mp.Queue, u
                 depth = midas(batch.to(DEVICE)).cpu()  # [1, height, width]
                 if not torch.isfinite(depth).all():
                     depth = torch.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
+
                 output_queue.put((image_stem, image, depth))
     except Exception as e:
         print(f"midas_worker: {e}")
@@ -180,9 +181,7 @@ def nvds_worker(proc_idx: int, input_queue: mp.Queue, output_queue: mp.Queue, us
                 preds = nvds(cuda_seq_frames)
                 depth = (preds[0] + preds[1]) / 2
 
-                # 16bit化
                 depth = depth.squeeze().cpu().numpy()
-
                 output_queue.put((image_stems[seq_len - 1], seq_images[seq_len - 1], depth))
     except Exception as e:
         print(f"nvds_worker: {e}")
@@ -205,6 +204,17 @@ def create_sbs_worker(
             depth = np.zeros(depth.shape, dtype=depth.dtype)
         return depth.astype(np.uint16)
 
+    def invert_map(f):
+        """逆remap"""
+        inv = np.zeros_like(f)
+        inv[:, :, 1], inv[:, :, 0] = np.indices(f.shape[:2])
+        p = np.copy(inv)
+        for i in range(10):
+            cor = inv - cv2.remap(f, p, None, interpolation=cv2.INTER_LINEAR)
+            rate = max(0.05, 1.0 - i * 0.2)  # 徐々に収束幅を狭める
+            p += cor * rate
+        return p
+
     try:
         while True:
             inp: tuple[str, Image.Image, np.ndarray] | None = input_queue.get()
@@ -222,10 +232,12 @@ def create_sbs_worker(
             height, width = image.shape[:2]
 
             if (depth.shape[0] != height) or (depth.shape[1] != width):
-                depth = cv2.resize(depth, (width, height), interpolation=cv2.INTER_CUBIC)
+                depth = cv2.resize(
+                    depth, (width, height), interpolation=cv2.INTER_LINEAR
+                )  # CUBICだとアンダーシュート・オーバーシュートが発生する
 
             # 境界部のdepth推定エラーをごまかす
-            depth2 = cv2.dilate(depth, np.ones((5, 5), np.uint8), iterations=2)
+            depth2 = cv2.dilate(depth, np.ones((7, 7), np.uint8), iterations=5)
             gap = depth2 - depth > (depth.max() - depth.min()) / 4
             depth[gap] = depth2[gap]
 
@@ -241,16 +253,6 @@ def create_sbs_worker(
             dist -= config.dist_screen  # スクリーンより手前がマイナス
             disp = dist * config.pd / (config.dist_screen + dist)  # プラスならR画素がL画素より右、マイナスなら逆
             disp_px = disp / config.screen_w * config.image_w / 2  # 視差
-
-            def invert_map(f):
-                """remap用に指定する"""
-                inv = np.zeros_like(f)
-                inv[:, :, 1], inv[:, :, 0] = np.indices(f.shape[:2])
-                p = np.copy(inv)
-                for i in range(10):
-                    cor = inv - cv2.remap(f, p, None, interpolation=cv2.INTER_LINEAR)
-                    p += cor * 0.5
-                return p
 
             # SBS用remap計算
             left_map_x, left_map_y = np.meshgrid(range(width), range(height))
@@ -285,8 +287,6 @@ def run(
     config: StereoConfig,
 ):
     """3D動画生成"""
-    WORKER_NUM = 1  # 並列数
-
     # worker起動
     queue_size = 5
     midas_queue = mp.Queue()
@@ -298,7 +298,7 @@ def run(
     sbs_proc = mp.spawn(
         create_sbs_worker,
         args=(sbs_queue, output_queue, depth_dir, config),
-        nprocs=WORKER_NUM,
+        nprocs=1,
         join=False,
         daemon=True,
     )
@@ -322,12 +322,13 @@ def run(
         outputdict={"-vcodec": codec_name, "-pix_fmt": pix_fmt, "-r": r_frame_rate},
     )
 
-    # 出力
+    # 入力
     jpg_paths = list(sorted(jpg_dir.glob("*.jpg")))
     for jpg_path in jpg_paths:
         midas_queue.put((jpg_path.stem, jpg_path))
     midas_queue.put(None)
 
+    # 出力
     with tqdm(jpg_paths) as pbar:
         for jpg_path in pbar:
             pbar.set_postfix({"nvds": nvds_queue.qsize(), "sbs": sbs_queue.qsize()})
