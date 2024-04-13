@@ -43,12 +43,19 @@ imutils = "0.5.4"
 # pyarrow = "9.0.0"
 
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 jupyterlab = "*"
+pytest = "*"
+
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests",]
+addopts = "--basetemp ./tests/tmp"
 
 
 [tool.ruff]

@@ -8,14 +8,12 @@
         }
     },
     "python.analysis.extraPaths": [
-        "MiDaS",
         "frame-interpolation",
-        "ZoeDepth"
     ],
     "python.autoComplete.extraPaths": [
-        "MiDaS",
         "frame-interpolation",
-        "ZoeDepth"
     ],
-    "python.languageServer": "Pylance"
+    "python.languageServer": "Pylance",
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
 }

@@ -3,84 +3,93 @@ from pathlib import Path
 import fire
 import numpy as np
 import torch
-from numpy.typing import DTypeLike, NDArray
 from PIL import Image
+from torch import Tensor
 from tqdm import tqdm
+
+from util import NDArrayUint8, save_depth
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def save_depth(path: Path, depth: NDArray, dtype: DTypeLike = np.uint8):
-    """Depth画像保存
+class MiDaSModel:
+    def __init__(self, model_name: str = "DPT_BEiT_L_512", use_half: bool = True):
+        self._use_half = use_half
 
-    :param path Path: 保存パス
-    :param depth NDArray: Depth画像
-    :param dtype DTypeLike: 保存型(np.uint8 or np.uint16)
-    """
-    if not np.isfinite(depth).all():
-        depth = np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
-    depth_min = depth.min()
-    depth_max = depth.max()
+        midas = torch.hub.load("intel-isl/MiDaS", model_name, pretrained=True)
+        if use_half:
+            midas = midas.half()
+        self._midas = midas.eval().to(DEVICE)
 
-    bits = dtype(0).nbytes
-    max_val = (2 ** (8 * bits)) - 1
-    if depth_max - depth_min > np.finfo("float").eps:
-        out = max_val * (depth - depth_min) / (depth_max - depth_min)
-    else:
-        out = np.zeros(depth.shape, dtype=depth.dtype)
+        transforms = torch.hub.load("intel-isl/MiDaS", "transforms")
+        if "DPT" in model_name:
+            if "512" in model_name:
+                self._transform = transforms.beit512_transform
+            elif ("Swin" in model_name) or ("384" in model_name):
+                self._transform = transforms.swin384_transform
+            elif ("Swin" in model_name) or ("256" in model_name):
+                self._transform = transforms.swin256_transform
+            elif "256" in model_name:
+                self._transform = transforms.small_transform
+            elif "LeViT" in model_name:
+                self._transform = transforms.levit_transform
+            else:
+                self._transform = transforms.dpt_transform
+        elif "256" in model_name:
+            self._transform = transforms.small_transform
+        else:
+            self._transform = transforms.default_transform
 
-    Image.fromarray(out.astype(dtype)).save(path)
+    @torch.no_grad()
+    def __call__(self, image: NDArrayUint8, inter_mode: str | None = "bilinear") -> Tensor:
+        batch = self._transform(image)
+        if self._use_half:
+            batch = batch.half()
+        pred = self._midas(batch.to(DEVICE))  # [1, height, width]
+        pred = torch.nan_to_num(pred, nan=0.0, posinf=0.0, neginf=0.0)  # inf対策
+
+        if inter_mode is not None:
+            # 元画像のサイズに合わせる
+            pred = torch.nn.functional.interpolate(
+                pred.unsqueeze(1), size=image.shape[:2], mode=inter_mode, align_corners=False
+            ).squeeze()
+            pred[pred < 0] = 0  # 補間によってマイナスになることがあるので対策
+        else:
+            pred = pred.squeeze()
+        return pred  # [height, width]
 
 
-def run(jpg_dir: Path, dst_dir: Path, use_half: bool = True):
+def run(image_dir: Path, depth_dir: Path, use_half: bool = True):
     # モデル準備
-    midas = torch.hub.load("intel-isl/MiDaS", "DPT_BEiT_L_512", pretrained=True).to(DEVICE)
-    midas.eval()
-    if use_half:
-        midas = midas.half()
-    midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms")
-    transform = midas_transforms.beit512_transform
+    midas = MiDaSModel("DPT_BEiT_L_512", use_half=use_half)
 
     # 処理開始
-    dst_dir.mkdir(exist_ok=True, parents=True)
-    jpg_paths = list(sorted(jpg_dir.glob("*.jpg")))
-    with torch.no_grad():
-        for jpg_path in tqdm(jpg_paths):
-            # Depth推定
-            image = np.asarray(Image.open(jpg_path))
-            batch = transform(image).to(DEVICE)
-            if use_half:
-                batch = batch.half()
-            pred = midas(batch)
-            pred = (
-                torch.nn.functional.interpolate(
-                    pred.unsqueeze(1), size=image.shape[:2], mode="bicubic", align_corners=False
-                )
-                .squeeze()
-                .cpu()
-                .numpy()
-            )
-            pred[pred < 0] = 0  # bicubicによってマイナスになることがあるので対策
+    depth_dir.mkdir(exist_ok=True, parents=True)
+    jpg_paths = list(sorted(image_dir.glob("*.jpg")))
+    for jpg_path in tqdm(jpg_paths):
+        # Depth推定
+        image = np.asarray(Image.open(jpg_path))
+        depth = midas(image, inter_mode="bilinear").cpu().numpy()
 
-            # 保存
-            dst_path = dst_dir / f"{jpg_path.stem}.png"
-            save_depth(dst_path, pred, np.uint16)
+        # 保存
+        dst_path = depth_dir / f"{jpg_path.stem}.png"
+        save_depth(dst_path, depth, np.uint16)
 
 
-def main(jpg_dir: str, dst_dir: str = None, use_half: bool = True):
+def main(image_dir: str, depth_dir: str = None, use_half: bool = True):
     """MiDaS実行
 
-    :param str jpg_dir: 入力フォルダ
-    :param str dst_dir: 保存フォルダ, defaults to None
+    :param str image_dir: 入力フォルダ
+    :param str depth_dir: 保存フォルダ, defaults to None
     :param bool use_half: 半精度推定を使うか, defaults to True
     """
-    jpg_dir = Path(jpg_dir)
-    if dst_dir is not None:
-        dst_dir = Path(dst_dir)
+    image_dir = Path(image_dir)
+    if depth_dir is not None:
+        depth_dir = Path(depth_dir)
     else:
-        dst_dir = jpg_dir.parent.parent / "depth" / jpg_dir.name
+        depth_dir = image_dir.parent.parent / "depth" / image_dir.name
 
-    run(jpg_dir, dst_dir, use_half)
+    run(image_dir, depth_dir, use_half)
 
 
 if __name__ == "__main__":
