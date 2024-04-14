@@ -28,7 +28,7 @@ def main(src_path: Union[str, Path], target: str = "projector"):
     subprocess.call(command, shell=True)
 
     # 3D動画生成
-    command = f'poetry run python create_stereo_movie.py -s "{src_path}" -i "{jpg_dir}" -d "{depth_dir}" -o "{stereo_path}" -t {target}'
+    command = f'poetry run python run_stereo_movie.py -s "{src_path}" -i "{jpg_dir}" -d "{depth_dir}" -o "{stereo_path}" -t {target}'
     print(command)
     subprocess.call(command, shell=True)
 

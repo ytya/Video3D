@@ -18,14 +18,14 @@ def _run(image_dir: Path, depth_dir: Path, use_half):
 
     # 処理開始
     depth_dir.mkdir(exist_ok=True, parents=True)
-    jpg_paths = list(sorted(image_dir.glob("*.jpg")))
-    for jpg_path in tqdm(jpg_paths):
+    image_paths = list(sorted(image_dir.glob("*.jpg")))
+    for image_path in tqdm(image_paths):
         # Depth推定
-        image = np.asarray(Image.open(jpg_path))
+        image = np.asarray(Image.open(image_path))
         depth = midas(image, inter_mode="bilinear").cpu().numpy()
 
         # 保存
-        dst_path = depth_dir / f"{jpg_path.stem}.png"
+        dst_path = depth_dir / f"{image_path.stem}.png"
         save_depth(dst_path, depth, np.uint16)
 
 

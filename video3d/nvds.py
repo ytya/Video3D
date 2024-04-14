@@ -1,9 +1,9 @@
 import numpy as np
 import torch
-import torchvision.transforms.functional as F
 from numpy.typing import NDArray
 from torch import Tensor
-from torchvision.transforms import InterpolationMode
+from torchvision.transforms import functional as F
+from torchvision.transforms.functional import InterpolationMode
 
 from nvds.full_model import NVDS
 from video3d.util import NDArrayUint8
@@ -21,8 +21,8 @@ class NVDSModel:
         self._device = torch.device(device)
 
         # NVDS
-        self.__mean = torch.as_tensor([0.485, 0.456, 0.406]).view(-1, 1, 1)
-        self.__std = torch.as_tensor([0.229, 0.224, 0.225]).view(-1, 1, 1)
+        self._mean = torch.as_tensor([0.485, 0.456, 0.406]).view(-1, 1, 1)
+        self._std = torch.as_tensor([0.229, 0.224, 0.225]).view(-1, 1, 1)
         checkpoint = torch.load(model_path, map_location="cpu")
         nvds = NVDS()
         nvds = torch.nn.DataParallel(nvds, device_ids=[0])
@@ -52,8 +52,8 @@ class NVDSModel:
             depth = torch.zeros(depth.shape, dtype=depth.dtype)
 
         # rgbdフレーム化
-        image = F.resize(image, size=depth.shape, interpolation=InterpolationMode.BICUBIC) / 255.0
-        image = (image - self.__mean) / self.__std
+        image = F.resize(image, size=depth.shape, interpolation=InterpolationMode.BICUBIC, antialias=True) / 255.0
+        image = (image - self._mean) / self._std
         rgbd = torch.cat([image, depth.unsqueeze(0)], dim=0)
         if self._use_half:
             rgbd = rgbd.half()
@@ -94,7 +94,7 @@ class NVDSModel:
             # [[0, 1, 2, 3]  -> [[1, 2, 3, 4]
             #  [6, 5, 4, 3]]     [7, 6, 5, 4]]
             self._tensor_seq_frames[1, 1:] = self._tensor_seq_frames[1, :-1].clone()  # bwd
-            self._tensor_seq_frames[1, 0] = rgbd[0]
+            self._tensor_seq_frames[1, 0] = rgbd
             self._tensor_seq_frames[0, :-1] = self._tensor_seq_frames[0, 1:].clone()  # fwd
             self._tensor_seq_frames[0, -1] = self._tensor_seq_frames[1, -1]
 
