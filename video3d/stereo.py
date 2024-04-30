@@ -40,10 +40,11 @@ class SBSCreator:
 
     def __init__(self, config: StereoConfig):
         self._config = config
-        self._gap_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        self._gap_iter = 3
-        self._gap_thr = 4
-        self._blur_size = (11, 11)
+        self._morph_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))  # Depth境界を太らせるフィルタサイズ
+        self._morph_iter = 3
+        self._gap_thr = 6  # Depth境界だとみなす差分閾値
+        self._blur_size = (11, 11)  # 距離画像の平滑化サイズ
+        self._disp_diff_cut = 0.5  # 視差で手前オブジェクトを判定するための閾値
 
     def _invert_map(self, f: NDArray) -> NDArray:
         """逆remap"""
@@ -68,11 +69,11 @@ class SBSCreator:
 
         # 境界部のdepth推定エラーをごまかす
         # 輪郭部 ≒ depthギャップが大きい部分を拡張
-        if self._gap_kernel is not None:
+        if self._morph_kernel is not None:
             depth_dil = depth.copy()
-            depth2 = cv2.dilate(depth_dil, self._gap_kernel, iterations=self._gap_iter)
+            depth2 = cv2.dilate(depth_dil, self._morph_kernel, iterations=self._morph_iter)
             gap = depth2 - depth_dil > (depth_dil.max() - depth_dil.min()) / self._gap_thr
-            gap = cv2.dilate(gap.astype(np.uint8), self._gap_kernel, iterations=self._gap_iter)
+            gap = cv2.dilate(gap.astype(np.uint8), self._morph_kernel, iterations=self._morph_iter)
             depth_dil[gap == 1] = depth2[gap == 1]
         else:
             depth_dil = depth
@@ -89,6 +90,17 @@ class SBSCreator:
         dist -= conf.dist_screen  # スクリーンより手前がマイナス
         disp = dist * conf.pd / (conf.dist_screen + dist)  # プラスならR画素がL画素より右、マイナスなら逆
         disp_px = disp / conf.screen_w * conf.image_w / 2  # 視差
+
+        # 境界部のdepth推定の曖昧さをごまかす
+        # 手前のオブジェクトを優先
+        if self._disp_diff_cut > 0:
+            disp_diff = disp_px - np.insert(disp_px, 0, disp_px[:, 0], axis=1)[:, :-1]
+            left_cut = disp_diff < -self._disp_diff_cut
+            right_cut = disp_diff > self._disp_diff_cut
+            for x in range(width - 2, -1):
+                disp_px[:, x][left_cut[:, x]] = disp_px[:, x + 1][left_cut[:, x]]
+            for x in range(1, width):
+                disp_px[:, x][right_cut[:, x]] = disp_px[:, x - 1][right_cut[:, x]]
 
         # SBS用remap計算
         left_map_x, left_map_y = np.meshgrid(range(width), range(height))

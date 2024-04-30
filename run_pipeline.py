@@ -32,7 +32,7 @@ class VideoReader:
 
     def __iter__(self):
         for i, image in enumerate(self._reader.nextFrame()):
-            yield f"{i:05d}", image
+            yield i, f"{i:05d}", image
 
     def close(self):
         self._reader.close()
@@ -43,8 +43,8 @@ class ImageReader:
         self._paths = paths
 
     def __iter__(self):
-        for p in self._paths:
-            yield p.stem, np.asarray(Image.open(p))
+        for i, p in enumerate(self._paths):
+            yield i, p.stem, np.asarray(Image.open(p))
 
     def close(self):
         pass
@@ -60,11 +60,11 @@ def midas_worker(proc_idx: int, input_images: Path | list[Path], output_queue: m
         else:
             reader = ImageReader(input_images)
 
-        for image_stem, image in reader:
+        for idx, image_stem, image in reader:
             # Depth推定
             depth = midas(image, inter_mode=None).cpu()  # [height, width]
 
-            output_queue.put((image_stem, image, depth))
+            output_queue.put((idx, image_stem, image, depth))
 
         output_queue.put(None)
         reader.close()
@@ -89,7 +89,7 @@ def nvds_worker(proc_idx: int, input_queue: mp.Queue, output_queue: mp.Queue, us
                     # 最後のフレームがきたら最終フレームを繰り返す
                     is_end = True
                     for _ in range(nvds.seq_len - 1):
-                        input_queue.put(("", images[-1], last_depth))
+                        input_queue.put((-1, "", images[-1], last_depth))
                     input_queue.put(None)
                     continue
                 else:
@@ -97,7 +97,7 @@ def nvds_worker(proc_idx: int, input_queue: mp.Queue, output_queue: mp.Queue, us
                     output_queue.put(None)
                     break
 
-            image_stem, image, depth = inp
+            _, image_stem, image, depth = inp
             first_frame = last_depth is None
             images.append(image)
             image_stems.append(image_stem)
@@ -116,7 +116,7 @@ def nvds_worker(proc_idx: int, input_queue: mp.Queue, output_queue: mp.Queue, us
 
             # 出力
             depth = depth.cpu().numpy()
-            output_queue.put((image_stems[0], images[0], depth))
+            output_queue.put((idx, image_stems[0], images[0], depth))
             image_stems = image_stems[1:]
             images = images[1:]
     except Exception as e:
@@ -139,7 +139,7 @@ def create_sbs_worker(
                 break
 
             # 画像取得
-            image_stem, image, depth = inp
+            idx, image_stem, image, depth = inp
             depth = depth_to_uint(depth, np.uint16)
             if depth_dir is not None:
                 depth_path = depth_dir / f"{image_stem}.png"
@@ -147,7 +147,7 @@ def create_sbs_worker(
 
             # SBS作成
             frame = creator(image, depth)
-            output_queue.put((image_stem, frame))
+            output_queue.put((idx, image_stem, frame))
     except Exception as e:
         print(f"create_sbs_worker: {e}")
         output_queue.put(None)
@@ -205,7 +205,7 @@ def run(
     sbs_proc = mp.spawn(
         create_sbs_worker,
         args=(sbs_queue, output_queue, depth_dir, config),
-        nprocs=1,
+        nprocs=2,
         join=False,
         daemon=True,
     )
@@ -222,22 +222,44 @@ def run(
     )
 
     # 出力
+    cache_frames = {}  # 順番が前後した時用のキャッシュ
+    next_idx = 0
     with tqdm(total=nb_frames) as pbar:
         while True:
             out: tuple[str, np.ndarray] | None = output_queue.get()
             pbar.set_postfix({"nvds": nvds_queue.qsize(), "sbs": sbs_queue.qsize()}, refresh=False)
             pbar.update(1)
             if out is None:
+                # 残ってるフレームを書き出し
+                for idx in sorted(cache_frames.keys()):
+                    writer.writeFrame(cache_frames[idx])
                 break
 
-            image_stem, frame = out
-            writer.writeFrame(frame[:, :, ::-1])
+            # 出力
+            idx, image_stem, frame = out
+            frame = frame[:, :, ::-1]  # RGB -> BGR
+
+            # 書き出し
+            if idx == next_idx:
+                writer.writeFrame(frame)
+                next_idx += 1
+
+                while True:
+                    # キャッシュに次のフレームがあれば書き出し
+                    next_frame = cache_frames.pop(next_idx, None)
+                    if next_frame is None:
+                        break
+                    writer.writeFrame(next_frame)
+                    next_idx += 1
+            else:
+                # 順番が前後したらキャッシュに一時保存
+                cache_frames[idx] = frame
 
     writer.close()
 
     # 音声コピー
     print("audio copy")
-    command = f'ffmpeg -i "{src_path}" -i "{nosound_path}" -c:v copy -c:a copy -map 0:a -map 1:v "{output_path}"'
+    command = f'ffmpeg -y -i "{src_path}" -i "{nosound_path}" -c:v copy -c:a copy -map 0:a -map 1:v "{output_path}"'
     print(command)
     ret = subprocess.call(command, shell=True)
     if ret != 0:
