@@ -57,6 +57,52 @@ class SBSCreator:
             p += cor * rate
         return p
 
+    def _complement_blank(self, map_x: NDArray, map_x_inv: NDArray, direction: int = 1) -> NDArray:
+        # 視差情報からremap元がない画素を特定
+        height, width = map_x.shape[:2]
+        _, my = np.meshgrid(range(width), range(height))
+        dmx1 = np.floor(map_x).astype(int)
+        dmx2 = np.ceil(map_x).astype(int)
+        dmx1[dmx1 < 0] = 0
+        dmx1[dmx1 >= width] = width - 1
+        dmx2[dmx2 < 0] = 0
+        dmx2[dmx2 >= width] = width - 1
+        blank = np.ones((height, width), dtype=np.uint8)
+        blank[my, dmx1] = 0
+        blank[my, dmx2] = 0
+
+        # 空白画素をいい感じにまとめる
+        kernel1 = np.ones((3, 3), np.uint8)
+        kernel2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        blank = cv2.morphologyEx(blank, cv2.MORPH_CLOSE, kernel1, iterations=1)
+        blank = cv2.morphologyEx(blank, cv2.MORPH_OPEN, kernel2, iterations=1)
+
+        # 最初に膨張した分不可視領域を増やす
+        ksize = self._morph_kernel.shape[1]
+        kernel = np.ones((1, ksize), np.uint8)
+        if direction == 1:
+            kernel[:, ksize // 2 + 1 :] = 0
+        else:
+            kernel[:, : ksize // 2] = 0
+        blank = cv2.dilate(blank, kernel, iterations=self._morph_iter)
+        blank = blank == 1
+
+        # 空白画素を補完
+        map_x_inv = map_x_inv.copy()
+        rev_cnt = np.zeros_like(map_x_inv, dtype=int)
+        if direction == 1:
+            rng = range(1, map_x_inv.shape[1])
+        else:
+            rng = range(map_x_inv.shape[1] - 2, -1, -1)
+        for x in rng:
+            # 空白画素（≒ 隠れてる背景画素）を平坦化
+            map_x_inv[:, x][blank[:, x]] = map_x_inv[:, x - direction][blank[:, x]]
+
+            # 空白画素の連続分をカウント
+            rev_cnt[:, x][blank[:, x]] = rev_cnt[:, x - direction][blank[:, x]] - 1
+
+        return map_x_inv
+
     def __call__(self, image: NDArrayUint8, depth: NDArrayUint) -> np.ndarray:
         height, width = image.shape[:2]
         image = image[:, :, ::-1]  # 関数内はBGR
@@ -95,12 +141,14 @@ class SBSCreator:
         # 手前のオブジェクトを優先
         if self._disp_diff_cut > 0:
             disp_diff = disp_px - np.insert(disp_px, 0, disp_px[:, 0], axis=1)[:, :-1]
-            left_cut = disp_diff < -self._disp_diff_cut
-            right_cut = disp_diff > self._disp_diff_cut
-            for x in range(width - 2, -1):
-                disp_px[:, x][left_cut[:, x]] = disp_px[:, x + 1][left_cut[:, x]]
+            right_cut = disp_diff < -self._disp_diff_cut
+            left_cut = disp_diff > self._disp_diff_cut
+            left_disp_px = disp_px.copy()
+            right_disp_px = disp_px.copy()
+            for x in range(width - 2, -1, -1):
+                right_disp_px[:, x][right_cut[:, x]] = right_disp_px[:, x + 1][right_cut[:, x]]
             for x in range(1, width):
-                disp_px[:, x][right_cut[:, x]] = disp_px[:, x - 1][right_cut[:, x]]
+                left_disp_px[:, x][left_cut[:, x]] = left_disp_px[:, x - 1][left_cut[:, x]]
 
         # SBS用remap計算
         left_map_x, left_map_y = np.meshgrid(range(width), range(height))
@@ -113,6 +161,11 @@ class SBSCreator:
         right_map = np.stack((right_map_x, right_map_y), axis=2).astype(np.float32)
         left_map_inv = self._invert_map(left_map)
         right_map_inv = self._invert_map(right_map)
+
+        # 境界部のdepth推定の曖昧さをごまかす
+        if self._morph_kernel is not None:
+            left_map_inv = self._complement_blank(left_map_x, left_map_inv, direction=1)
+            right_map_inv = self._complement_blank(right_map_x, right_map_inv, direction=-1)
 
         # 画像生成
         left_img = cv2.remap(image, left_map_inv, None, interpolation=cv2.INTER_LINEAR)
