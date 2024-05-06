@@ -89,7 +89,6 @@ class SBSCreator:
 
         # 空白画素を補完
         map_x_inv = map_x_inv.copy()
-        rev_cnt = np.zeros_like(map_x_inv, dtype=int)
         if direction == 1:
             rng = range(1, map_x_inv.shape[1])
         else:
@@ -97,9 +96,6 @@ class SBSCreator:
         for x in rng:
             # 空白画素（≒ 隠れてる背景画素）を平坦化
             map_x_inv[:, x][blank[:, x]] = map_x_inv[:, x - direction][blank[:, x]]
-
-            # 空白画素の連続分をカウント
-            rev_cnt[:, x][blank[:, x]] = rev_cnt[:, x - direction][blank[:, x]] - 1
 
         return map_x_inv
 
