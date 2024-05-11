@@ -42,7 +42,8 @@ class SBSCreator:
         self._config = config
         self._morph_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))  # Depth境界を太らせるフィルタサイズ
         self._morph_iter = 3
-        self._gap_thr = 6  # Depth境界だとみなす差分閾値
+        self._max_gap_thr = 10  # Depth境界だとみなす最大閾値
+        self._min_gap_thr = 100  # Depth境界だとみなす最小閾値
         self._blur_size = (11, 11)  # 距離画像の平滑化サイズ
         self._disp_diff_cut = 0.5  # 視差で手前オブジェクトを判定するための閾値
 
@@ -113,10 +114,15 @@ class SBSCreator:
         # 輪郭部 ≒ depthギャップが大きい部分を拡張
         if self._morph_kernel is not None:
             depth_dil = depth.copy()
+            max_gap = (depth_dil.max() - depth_dil.min()) / self._max_gap_thr
+            min_gap = (depth_dil.max() - depth_dil.min()) / self._min_gap_thr
             depth2 = cv2.dilate(depth_dil, self._morph_kernel, iterations=self._morph_iter)
-            gap = depth2 - depth_dil > (depth_dil.max() - depth_dil.min()) / self._gap_thr
-            gap = cv2.dilate(gap.astype(np.uint8), self._morph_kernel, iterations=self._morph_iter)
-            depth_dil[gap == 1] = depth2[gap == 1]
+            gap = depth2 - depth
+            gap[gap < min_gap] = min_gap
+            gap[gap > max_gap] = max_gap
+            gap = 1 / gap
+            gap = (gap - gap.min()) / (gap.max() - gap.min())
+            depth_dil = depth_dil * gap + depth2 * (1 - gap)
         else:
             depth_dil = depth
 
