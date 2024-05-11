@@ -17,37 +17,11 @@ from tqdm import tqdm
 from video3d.midas import MiDaSModel
 from video3d.nvds import NVDSModel
 from video3d.stereo import SCONFIGS, SBSCreator, StereoConfig
-from video3d.util import NDArray, NDArrayUint8, depth_to_uint
+from video3d.util import ImageReader, NDArray, NDArrayUint8, VideoReader, depth_to_uint, read_video_info
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark = True
-
-
-class VideoReader:
-    def __init__(self, path: Path):
-        np.float = np.float64  # skvideoバグ対策
-        np.int = np.int_
-        self._reader = skvideo.io.FFmpegReader(str(path))
-
-    def __iter__(self):
-        for i, image in enumerate(self._reader.nextFrame()):
-            yield i, f"{i:05d}", image
-
-    def close(self):
-        self._reader.close()
-
-
-class ImageReader:
-    def __init__(self, paths: list[Path]):
-        self._paths = paths
-
-    def __iter__(self):
-        for i, p in enumerate(self._paths):
-            yield i, p.stem, np.asarray(Image.open(p))
-
-    def close(self):
-        pass
 
 
 def midas_worker(proc_idx: int, input_images: Path | list[Path], output_queue: mp.Queue, use_half: bool = True):
@@ -125,7 +99,12 @@ def nvds_worker(proc_idx: int, input_queue: mp.Queue, output_queue: mp.Queue, us
 
 
 def create_sbs_worker(
-    proc_idx: int, input_queue: mp.Queue, output_queue: mp.Queue, depth_dir: Path | None, config: StereoConfig
+    proc_idx: int,
+    input_queue: mp.Queue,
+    output_queue: mp.Queue,
+    depth_dir: Path | None,
+    blank_dir: Path | None,
+    config: StereoConfig,
 ) -> np.ndarray:
     """SBS画像作成"""
 
@@ -146,8 +125,12 @@ def create_sbs_worker(
                 Image.fromarray(depth).save(depth_path, compress_level=3)
 
             # SBS作成
-            frame = creator(image, depth)
+            frame, blank = creator(image, depth)
             output_queue.put((idx, image_stem, frame))
+
+            if blank_dir is not None:
+                blank_path = blank_dir / f"{image_stem}.png"
+                Image.fromarray(blank).save(blank_path, compress_level=3)
     except Exception as e:
         print(f"create_sbs_worker: {e}")
         output_queue.put(None)
@@ -157,6 +140,7 @@ def run(
     src_path: Path,
     image_dir: Path | None,
     depth_dir: Path | None,
+    blank_dir: Path | None,
     output_path: Path,
     frame_interpolated: int,
     config: StereoConfig,
@@ -167,22 +151,16 @@ def run(
     :param Path src_path: 入力動画
     :param Path | None image_dir: 入力画像フォルダ
     :param Path | None depth_dir: 出力Depthフォルダ
+    :param Path | None blank_dir: 出力Blankフォルダ
     :param Path output_path: 出力動画
     :param int frame_interpolated: フレーム補間数
     :param StereoConfig config: ステレオ設定
     :param int crf: 出力CRF
     """
     # ソース動画情報取得
-    video_info = skvideo.io.ffprobe(src_path)["video"]
-    avg_frame_rate = video_info["@avg_frame_rate"]
-    nb_frames = int(video_info.get("@nb_frames", 0))
-    if nb_frames == 0:
-        for tag in video_info["tag"]:
-            if tag["@key"] == "NUMBER_OF_FRAMES":
-                nb_frames = int(tag["@value"])
-                break
-    a, b = avg_frame_rate.split("/")
-    r_frame_rate = f"{int(a)*frame_interpolated}/{b}"
+    vinfo = read_video_info(src_path)
+    nb_frames = vinfo.frame_num
+    r_frame_rate = f"{int(vinfo.frame_rate_n)*frame_interpolated}/{vinfo.frame_rate_d}"
     print(f"video frame rate: {r_frame_rate},  video frames: {nb_frames}")
 
     # 入力動画
@@ -194,6 +172,8 @@ def run(
 
     if depth_dir is not None:
         depth_dir.mkdir(exist_ok=True, parents=True)
+    if blank_dir is not None:
+        blank_dir.mkdir(exist_ok=True, parents=True)
 
     # worker起動
     queue_size = 5
@@ -204,7 +184,7 @@ def run(
     nvds_proc = mp.spawn(nvds_worker, args=(nvds_queue, sbs_queue, True), nprocs=1, join=False, daemon=True)
     sbs_proc = mp.spawn(
         create_sbs_worker,
-        args=(sbs_queue, output_queue, depth_dir, config),
+        args=(sbs_queue, output_queue, depth_dir, blank_dir, config),
         nprocs=2,
         join=False,
         daemon=True,
@@ -237,7 +217,6 @@ def run(
 
             # 出力
             idx, image_stem, frame = out
-            frame = frame[:, :, ::-1]  # RGB -> BGR
 
             # 書き出し
             if idx == next_idx:
@@ -278,6 +257,7 @@ if __name__ == "__main__":
     parser.add_argument("-i", "--image_dir", default=None, help="folder with input images")
     parser.add_argument("-o", "--output_path", default=None, help="output video path")
     parser.add_argument("-d", "--depth_dir", default=None, help="folder with depth images")
+    parser.add_argument("-b", "--blank_dir", default=None, help="folder with blank images)")
     parser.add_argument("-f", "--frame_interpolated", default=1, type=int, help="input images is frame interpolated")
     parser.add_argument("-t", "--target_device", default="projector", help="target device (projector or mobile)")
     parser.add_argument("--crf", default=20, type=int, help="output video quality (lower is better)")
@@ -287,13 +267,16 @@ if __name__ == "__main__":
     title = src_path.stem
     image_dir = args.image_dir
     depth_dir = args.depth_dir
+    blank_dir = args.blank_dir
     if image_dir is not None:
         image_dir = Path(image_dir)
     if depth_dir is not None:
         depth_dir = Path(depth_dir)
+    if blank_dir is not None:
+        blank_dir = Path(blank_dir)
     if args.output_path is not None:
         output_path = Path(args.output_path)
     else:
         output_path = src_path.parent.parent / "3d" / src_path.name
     config = SCONFIGS[args.target_device]
-    run(src_path, image_dir, depth_dir, output_path, args.frame_interpolated, config, args.crf)
+    run(src_path, image_dir, depth_dir, blank_dir, output_path, args.frame_interpolated, config, args.crf)

@@ -12,6 +12,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from video3d.stereo import SCONFIGS, SBSCreator, StereoConfig
+from video3d.util import read_video_info
 
 _creator: SBSCreator | None = None
 
@@ -25,7 +26,8 @@ def _create_sbs(image_path: Path, depth_path: Path) -> np.ndarray:
     global _creator
     image = np.asarray(Image.open(image_path))
     depth = np.asarray(Image.open(depth_path))
-    return _creator(image, depth)
+    frame, blank = _creator(image, depth)
+    return frame
 
 
 def run(
@@ -52,13 +54,10 @@ def run(
     output_path.parent.mkdir(exist_ok=True, parents=True)
 
     # ソース動画情報取得
-    video_info = skvideo.io.ffprobe(src_path)["video"]
-    avg_frame_rate = video_info["@avg_frame_rate"]
-    a, b = avg_frame_rate.split("/")
-    r_frame_rate = f"{int(a)*frame_interpolated}/{b}"
-    codec_name = video_info["@codec_name"]
-    pix_fmt = video_info["@pix_fmt"]
-    print(f"video setting: {r_frame_rate}, {codec_name}, {pix_fmt}")
+    vinfo = read_video_info(src_path)
+    nb_frames = vinfo.frame_num
+    r_frame_rate = f"{int(vinfo.frame_rate_n)*frame_interpolated}/{vinfo.frame_rate_d}"
+    print(f"video frame rate: {r_frame_rate},  video frames: {nb_frames}")
 
     # 動画Writer作成
     writer = skvideo.io.FFmpegWriter(
@@ -82,7 +81,7 @@ def run(
             ]
             for future in futures:
                 frame = future.result()
-                writer.writeFrame(frame[:, :, ::-1])
+                writer.writeFrame(frame)
     writer.close()
 
 

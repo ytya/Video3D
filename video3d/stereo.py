@@ -97,7 +97,7 @@ class SBSCreator:
             # 空白画素（≒ 隠れてる背景画素）を平坦化
             map_x_inv[:, x][blank[:, x]] = map_x_inv[:, x - direction][blank[:, x]]
 
-        return map_x_inv
+        return map_x_inv, blank
 
     def __call__(self, image: NDArrayUint8, depth: NDArrayUint) -> np.ndarray:
         height, width = image.shape[:2]
@@ -160,13 +160,17 @@ class SBSCreator:
 
         # 境界部のdepth推定の曖昧さをごまかす
         if self._morph_kernel is not None:
-            left_map_inv = self._complement_blank(left_map_x, left_map_inv, direction=1)
-            right_map_inv = self._complement_blank(right_map_x, right_map_inv, direction=-1)
+            left_map_inv, left_blank = self._complement_blank(left_map_x, left_map_inv, direction=1)
+            right_map_inv, right_blank = self._complement_blank(right_map_x, right_map_inv, direction=-1)
 
         # 画像生成
         left_img = cv2.remap(image, left_map_inv, None, interpolation=cv2.INTER_LINEAR)
         right_img = cv2.remap(image, right_map_inv, None, interpolation=cv2.INTER_LINEAR)
-        frame = np.hstack((left_img, right_img))[:, :, ::-1]
+        frame = np.hstack((left_img, right_img))
+        blank = np.hstack((left_blank.astype(np.uint8) * 255, right_blank.astype(np.uint8) * 255))
         if conf.is_half:
             frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_CUBIC)
-        return frame[:, :, ::-1]
+            blank = cv2.resize(blank, (width, height), interpolation=cv2.INTER_LINEAR)
+            blank = (blank > 0).astype(np.uint8) * 255
+
+        return frame[:, :, ::-1], blank
