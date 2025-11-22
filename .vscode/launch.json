@@ -79,6 +79,48 @@
                 "projector"
             ],
             "justMyCode": false
+        },
+        {
+            "name": "Python デバッガー: infer_propainter",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "inference_propainter.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--video",
+                "H:\\work\\Video3D\\3d_nvds2\\SAXC1049.Title1.chapter10.mp4",
+                "--mask",
+                "F:\\Programming\\Python\\Video3D\\Video3D2\\blank",
+                "--height",
+                "360",
+                "--width",
+                "640",
+                "--subvideo_length",
+                "60"
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "Python デバッガー: run_propainter",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "run_propainter.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--src_path",
+                "H:\\work\\Video3D\\3d_nvds2\\SAXC1049.Title1.chapter10.mp4",
+                "--mask_dir",
+                "F:\\Programming\\Python\\Video3D\\Video3D2\\blank",
+                "--output_path",
+                "F:\\Programming\\Python\\Video3D\\Video3D2\\test.mp4",
+                "--resize_ratio",
+                "0.3",
+                "--subvideo_length",
+                "60",
+                "--mask_dilation",
+                "12"
+            ],
+            "justMyCode": false
         }
     ]
 }

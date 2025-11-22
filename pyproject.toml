@@ -21,6 +21,17 @@ matplotlib = "*"
 timm = "0.6.12" # 0.9.1 だと実行時エラー
 imutils = "0.5.4"
 
+# ProPainter
+av = "*"
+addict = "*"
+future = "*"
+scipy = "*"
+scikit-image = "*"
+imageio-ffmpeg = "*"
+pyyaml = "*"
+requests = "*"
+yapf = "*"
+
 # frame-interpolation
 # tensorflow = "2.11.1"
 # tensorflow-io-gcs-filesystem = "0.31.0"  # 0.32.0 だとインストールエラー
